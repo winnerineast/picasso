@@ -1,4 +1,18 @@
 # -*- coding: utf-8 -*-
+###############################################################################
+# Copyright (c) 2017 Merantix GmbH
+# All rights reserved. This program and the accompanying materials
+# are made available under the terms of the Eclipse Public License v1.0
+# which accompanies this distribution, and is available at
+# http://www.eclipse.org/legal/epl-v10.html
+#
+# Contributors:
+#    Ryan Henderson - initial API and implementation and/or initial
+#    documentation
+#    Josh Chen - refactor and class config
+#    Jan Steinke - Restful API
+#    XdpAreKid - Support Keras >= 2
+###############################################################################
 """Flask server code for visualization
 
 This is the entry point for the application. All views and
@@ -21,22 +35,18 @@ Examples:
 Attributes:
     APP_TITLE (:obj:`str`): Name of the application to display in the
         title bar
-    VISUALIZATON_CLASSES(:obj:`tuple` of :class:`.BaseVisualization`):
+    VISUALIZATION_CLASSES (:obj:`tuple` of :class:`.BaseVisualization`):
         Visualization classes available for rendering.
 
 """
-import os
 import io
-import time
-import inspect
+import os
 from operator import itemgetter
 from tempfile import mkdtemp
-from importlib import import_module
-from types import ModuleType
+import time
 
 from PIL import Image
 from flask import (
-    g,
     render_template,
     request,
     session,
@@ -44,97 +54,49 @@ from flask import (
 )
 
 from picasso import app
-from picasso.ml_frameworks.model import generate_model
-from picasso.visualizations import BaseVisualization
+from picasso.models.base import load_model
 from picasso.visualizations import *
+from picasso.utils import (
+    get_app_state,
+    get_visualizations
+)
 
-APP_TITLE = 'Picasso Visualizer'
 
-# import visualizations classes dynamically
-visualization_attr = vars(
-    import_module('picasso.visualizations'))
-visualization_submodules = [visualization_attr[x] for x in visualization_attr
-                            if isinstance(visualization_attr[x], ModuleType)]
-VISUALIZATON_CLASSES = []
-for submodule in visualization_submodules:
-    members = vars(submodule)
-    classes = [members[x] for x in members if inspect.isclass(members[x]) and
-               issubclass(members[x], BaseVisualization) and
-               members[x] is not BaseVisualization]
-    VISUALIZATON_CLASSES += classes
-
-# Use a bogus secret key for debugging ease. No
-# client information is stored, the secret key is only
-# necessary for generating the session cookie.
+# Use a bogus secret key for debugging ease. No client information is stored;
+# the secret key is only necessary for generating the session cookie.
 if app.debug:
     app.secret_key = '...'
 else:
     app.secret_key = os.urandom(24)
 
-# This pattern is used in other projects with Flask and
-# tensorflow, but probably isn't the most stable or
-# safest way.  Would be much better to connect to a
-# persistent tensorflow session running in another process or
+# This pattern is used in other projects with Flask and Tensorflow, but
+# but probably isn't the most stable or safest way.  Would be much better to
+# connect to a persistent Tensorflow session running in another process or
 # machine.
-ml_backend = \
-        generate_model(
-            **{k.lower(): v for (k, v)
-               in app.config.items()
-               if k.startswith('BACKEND')}
-        )
-ml_backend.load(app.config['DATA_DIR'])
+model = load_model(app.config['MODEL_CLS_PATH'], app.config['MODEL_CLS_NAME'],
+                   app.config['MODEL_LOAD_ARGS'])
 
 
-def get_visualizations():
-    """Get visualization classes in context
+@app.before_request
+def initialize_new_session():
+    """Check session and initialize if necessary
 
-    Puts the available visualizations in the request context
-    and returns them.
-
-    Returns:
-        :obj:`list` of instances of :class:`.BaseVisualization` or
-        derived class
+    Before every request, check the user session.  If no session exists, add
+    one and provide temporary locations for images
 
     """
-    if not hasattr(g, 'visualizations'):
-        g.visualizations = {}
-        for VisClass in VISUALIZATON_CLASSES:
-            vis = VisClass(get_ml_backend())
-            g.visualizations[vis.__class__.__name__] = vis
-
-    return g.visualizations
-
-
-def get_ml_backend():
-    """Get machine learning backend in context
-
-    Puts the backend in the request context and returns it.
-
-    Returns:
-        instance of :class:`.ml_frameworks.model.Model` or derived
-        class
-    """
-    if not hasattr(g, 'ml_backend'):
-        g.ml_backend = ml_backend
-    return g.ml_backend
-
-
-def get_app_state():
-    """Get current status of application in context
-
-    Returns:
-        :obj:`dict` of application status
-
-    """
-    if not hasattr(g, 'app_state'):
-        model = get_ml_backend()
-        g.app_state = {
-            'app_title': APP_TITLE,
-            'backend': type(model).__name__,
-            'latest_ckpt_name': model.latest_ckpt_name,
-            'latest_ckpt_time': model.latest_ckpt_time
-        }
-    return g.app_state
+    if 'image_uid_counter' in session and 'image_list' in session:
+        app.logger.debug('images are already being tracked')
+    else:
+        # reset image list counter for the session
+        session['image_uid_counter'] = 0
+        session['image_list'] = []
+    if 'img_input_dir' in session and 'img_output_dir' in session:
+        app.logger.debug('temporary image directories already exist')
+    else:
+        # make image upload directory
+        session['img_input_dir'] = mkdtemp()
+        session['img_output_dir'] = mkdtemp()
 
 
 @app.route('/', methods=['GET', 'POST'])
@@ -150,29 +112,28 @@ def landing():
     if request.method == 'POST':
         session['vis_name'] = request.form.get('choice')
         vis = get_visualizations()[session['vis_name']]
-        if hasattr(vis, 'settings'):
+        if vis.ALLOWED_SETTINGS:
             return visualization_settings()
         return select_files()
 
     # otherwise, on GET request
     visualizations = get_visualizations()
     vis_desc = [{'name': vis,
-                 'description': visualizations[vis].description}
+                 'description': visualizations[vis].DESCRIPTION}
                 for vis in visualizations]
     session.clear()
     return render_template('select_visualization.html',
                            app_state=get_app_state(),
                            visualizations=sorted(vis_desc,
-                                                 key=itemgetter('name'))
-                           )
+                                                 key=itemgetter('name')))
 
 
 @app.route('/visualization_settings', methods=['POST'])
 def visualization_settings():
     """Visualization settings page
 
-    Will only render if the visualization object has a `settings`
-    attribute.
+    Will only render if the visualization object has a non-null
+    `ALLOWED_SETTINGS` attribute.
 
     """
     if request.method == 'POST':
@@ -180,7 +141,7 @@ def visualization_settings():
         return render_template('settings.html',
                                app_state=get_app_state(),
                                current_vis=session['vis_name'],
-                               settings=vis.settings)
+                               settings=vis.ALLOWED_SETTINGS)
 
 
 @app.route('/select_files', methods=['GET', 'POST'])
@@ -216,31 +177,27 @@ def select_files():
             inputs.append(entry)
 
         start_time = time.time()
-        session['img_output_dir'] = mkdtemp()
-        output = \
-            vis.make_visualization(inputs,
-                                   output_dir=session['img_output_dir'],
-                                   settings=session['settings'])
+        if 'settings' in session:
+            vis.update_settings(session['settings'])
+        output = vis.make_visualization(inputs,
+                                        output_dir=session['img_output_dir'])
         duration = '{:.2f}'.format(time.time() - start_time, 2)
 
         for i, file_obj in enumerate(request.files.getlist('file[]')):
             output[i].update({'filename': file_obj.filename})
 
-        temp_dir = mkdtemp()
-        session['img_input_dir'] = temp_dir
         for entry in inputs:
-            path = os.path.join(temp_dir, entry['filename'])
+            path = os.path.join(session['img_input_dir'], entry['filename'])
             entry['data'].save(path, 'PNG')
 
         kwargs = {}
-        if hasattr(vis, 'reference_link'):
-            kwargs.update({'reference_link': vis.reference_link})
+        if vis.REFERENCE_LINK:
+            kwargs['reference_link'] = vis.REFERENCE_LINK
 
         return render_template('{}.html'.format(session['vis_name']),
                                inputs=inputs,
                                results=output,
                                current_vis=session['vis_name'],
-                               settings=session['settings'],
                                app_state=get_app_state(),
                                duration=duration,
                                **kwargs)

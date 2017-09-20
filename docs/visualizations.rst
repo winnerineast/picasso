@@ -13,14 +13,12 @@ For our example, ``FunViz``, we'll need ``picasso/visualizations/fun_viz.py``:
 
 .. code-block:: python3
 
-   from picasso.visualizations import BaseVisualization
+   from picasso.visualizations.base import BaseVisualization
 
 
    class FunViz(BaseVisualization):
 
-       def __init__(self, model):
-           self.description = 'A fun visualization!'
-           self.model = model
+       DESCRIPTION = 'A fun visualization!'
 
        def make_visualization(self, inputs, output_dir, settings=None):
            pass
@@ -34,7 +32,7 @@ and ``picasso/templates/FunViz.html``:
    your visualization html goes here
    {% endblock %}
 
-Some explanation for the ``FunViz`` class in ``fun_viz.py``: All visualizations should inherit from :class:`~picasso.visualizations.__init__.BaseVisualization` (see `code <BaseVisualization>`_).  You must implement the ``__init__`` method, and it should accept one argument, ``model``. ``model`` will be an instance of a child class of `Model`_, which provides an interface to the machine learning backend.  You can also add a description which will display on the landing page.
+Some explanation for the ``FunViz`` class in ``fun_viz.py``: All visualizations should inherit from :class:`~picasso.visualizations.base.__init__.BaseVisualization`.  You can also add a description which will display on the landing page.
 
 Some explanation for ``FunViz.html``: The web app is uses `Flask`_, which uses `Jinja2`_ templating.  This explains the funny ``{% %}`` delimiters.   The ``{% extends "result.html" %}`` just tells the your page to inherit from a boilerplate.  All your html should sit within the ``vis`` block.
 
@@ -53,18 +51,16 @@ Add visualization logic
 Our visualization should actually do something.  It's just going to compute the class probabilities and pass them back along to the web app. So we'll add:
 
 .. code-block:: python3
-   :emphasize-lines: 11-21
+   :emphasize-lines: 9-21
 
-   from picasso.visualizations import BaseVisualization
+   from picasso.visualizations.base import BaseVisualization
 
 
    class FunViz(BaseVisualization):
 
-       def __init__(self, model):
-           self.description = 'A fun visualization!'
-           self.model = model
+       DESCRIPTION = 'A fun visualization!'
 
-       def make_visualization(self, inputs, output_dir, settings=None):
+       def make_visualization(self, inputs, output_dir):
            pre_processed_arrays = self.model.preprocess([example['data']
                                                         for example in inputs])
            predictions = self.model.sess.run(self.model.tf_predict_var,
@@ -87,7 +83,7 @@ Let's go line by line:
    class FunViz(BaseVisualization):
        ...
 
-       def make_visualization(self, inputs, output_dir, settings=None):
+       def make_visualization(self, inputs, output_dir):
            pre_processed_arrays = self.model.preprocess([example['data']
                                                         for example in inputs])
            ...
@@ -102,7 +98,7 @@ Let's go line by line:
    class FunViz(BaseVisualization):
        ...
 
-       def make_visualization(self, inputs, output_dir, settings=None):
+       def make_visualization(self, inputs, output_dir):
            pre_processed_arrays = self.model.preprocess([example['data']
                                                         for example in inputs])
            predictions = self.model.sess.run(self.model.tf_predict_var,
@@ -120,7 +116,7 @@ Here's where we actually do some computation to be used in the visualization. No
    class FunViz(BaseVisualization):
        ...
 
-       def make_visualization(self, inputs, output_dir, settings=None):
+       def make_visualization(self, inputs, output_dir):
            pre_processed_arrays = self.model.preprocess([example['data']
                                                         for example in inputs])
            predictions = self.model.sess.run(self.model.tf_predict_var,
@@ -139,7 +135,7 @@ Here's where we actually do some computation to be used in the visualization. No
    class FunViz(BaseVisualization):
        ...
 
-       def make_visualization(self, inputs, output_dir, settings=None):
+       def make_visualization(self, inputs, output_dir):
            pre_processed_arrays = self.model.preprocess([example['data']
                                                         for example in inputs])
            predictions = self.model.sess.run(self.model.tf_predict_var,
@@ -311,20 +307,23 @@ Similarly, there is an ``outputs/`` folder (not shown in this example).  Its pat
 Add some settings
 =================
 
-Maybe we'd like the user to be able to limit the number of classes shown.  We can easily do this by adding a ``settings`` property to the ``FunViz`` class.
+Maybe we'd like the user to be able to limit the number of classes shown.  We can easily do this by adding an ``ALLOWED_SETTINGS`` property to the ``FunViz`` class.
 
 .. code-block:: python3
-   :emphasize-lines: 5, 21
+   :emphasize-lines: 6, 10-12, 24
 
    from picasso.visualizations import BaseVisualization
 
 
    class FunViz(BaseVisualization):
-       settings = {'Display': ['1', '2', '3']}
 
-       def __init__(self, model):
-           self.description = 'A fun visualization!'
-           self.model = model
+       ALLOWED_SETTINGS = {'Display': ['1', '2', '3']}
+
+       DESCRIPTION = 'A fun visualization!'
+
+       @property
+       def display(self):
+           return int(self._display)
 
        def make_visualization(self, inputs, output_dir, settings=None):
            pre_processed_arrays = self.model.preprocess([example['data']
@@ -336,8 +335,10 @@ Maybe we'd like the user to be able to limit the number of classes shown.  We ca
            results = []
            for i, inp in enumerate(inputs):
                results.append({'input_file_name': inp['filename'],
-                               'predict_probs': filtered_predictions[i][:int(settings['Display'])]})
+                               'predict_probs': filtered_predictions[i][:self.display})
            return results
+
+The ``ALLOWED_SETTINGS`` dict tells the web app what to display on the settings page.  The names of these settings will be turned into lowercase properties preceeded by an underscore.  Thus, "Display" becomes ``_display``.  You should implement a property function to cast the string to the correct type.
 
 A page to select the settings will automatically be generated.
 
@@ -390,10 +391,6 @@ For more complex visualizations, see the examples in `the visualizations module`
 .. _ClassProbabilities: https://github.com/merantix/picasso/blob/master/picasso/visualizations/class_probabilities.py
 
 .. _template: https://github.com/merantix/picasso/blob/master/picasso/templates/ClassProbabilities.html
-
-.. _BaseVisualization: https://github.com/merantix/picasso/blob/master/picasso/visualizations/__init__.py 
-
-.. _Model: https://github.com/merantix/picasso/blob/master/picasso/ml_frameworks/model.py
 
 .. _Flask: http://flask.pocoo.org/
 

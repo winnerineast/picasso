@@ -1,4 +1,16 @@
-from picasso.visualizations import BaseVisualization
+###############################################################################
+# Copyright (c) 2017 Merantix GmbH
+# All rights reserved. This program and the accompanying materials
+# are made available under the terms of the Eclipse Public License v1.0
+# which accompanies this distribution, and is available at
+# http://www.eclipse.org/legal/epl-v10.html
+#
+# Contributors:
+#    Ryan Henderson - initial API and implementation and/or initial
+#    documentation
+#    Josh Chen - refactor and class config
+###############################################################################
+from picasso.visualizations.base import BaseVisualization
 
 
 class ClassProbabilities(BaseVisualization):
@@ -9,12 +21,11 @@ class ClassProbabilities(BaseVisualization):
 
     """
 
-    description = 'Predict class probabilities from new examples'
+    DESCRIPTION = 'Predict class probabilities from new examples'
 
-    def make_visualization(self, inputs,
-                           output_dir, settings=None):
+    def make_visualization(self, inputs, output_dir):
         pre_processed_arrays = self.model.preprocess([example['data']
-                                                     for example in inputs])
+                                                      for example in inputs])
         predictions = self.model.sess.run(self.model.tf_predict_var,
                                           feed_dict={self.model.tf_input_var:
                                                      pre_processed_arrays})
@@ -22,5 +33,7 @@ class ClassProbabilities(BaseVisualization):
         results = []
         for i, inp in enumerate(inputs):
             results.append({'input_file_name': inp['filename'],
+                            'has_output': False,
+                            'has_processed_input': False,
                             'predict_probs': filtered_predictions[i]})
         return results

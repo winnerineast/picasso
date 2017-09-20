@@ -1,3 +1,15 @@
+###############################################################################
+# Copyright (c) 2017 Merantix GmbH
+# All rights reserved. This program and the accompanying materials
+# are made available under the terms of the Eclipse Public License v1.0
+# which accompanies this distribution, and is available at
+# http://www.eclipse.org/legal/epl-v10.html
+#
+# Contributors:
+#    Ryan Henderson - initial API and implementation and/or initial
+#    documentation
+#    Josh Chen - refactor and class config
+###############################################################################
 import os
 import time
 
@@ -8,7 +20,7 @@ import matplotlib
 matplotlib.use('Agg')
 from matplotlib import pyplot
 
-from picasso.visualizations import BaseVisualization
+from picasso.visualizations.base import BaseVisualization
 
 
 class PartialOcclusion(BaseVisualization):
@@ -22,42 +34,49 @@ class PartialOcclusion(BaseVisualization):
     classifying on the image feature we expect.
 
     """
-    settings = {
+    DESCRIPTION = ('Partially occlude image to determine regions '
+                   'important to classification')
+
+    REFERENCE_LINK = 'https://arxiv.org/abs/1311.2901'
+
+    ALLOWED_SETTINGS = {
         'Window': ['0.50', '0.40', '0.30', '0.20', '0.10', '0.05'],
         'Strides': ['2', '5', '10', '20', '30'],
         'Occlusion': ['grey', 'black', 'white']
     }
 
-    description = ('Partially occlude image to determine regions '
-                   'important to classification')
-    reference_link = 'https://arxiv.org/abs/1311.2901'
+    @property
+    def window(self):
+        return float(self._window)
+
+    @property
+    def num_windows(self):
+        return int(self._strides)
+
+    @property
+    def occlusion_method(self):
+        return self._occlusion
 
     def __init__(self, model):
-        super(PartialOcclusion, self).__init__(model)
+        super().__init__(model)
         self.predict_tensor = self.get_predict_tensor()
 
-        self.window = 0.10
-        self.num_windows = 20
         self.grid_percent = 0.01
-        self.occlusion_method = 'white'
         self.occlusion_value = 255
         self.initial_resize = (244, 244)
 
-    def make_visualization(self, inputs, output_dir, settings=None):
-        if settings:
-            self.update_settings(settings)
-            if self.occlusion_method == 'black':
-                self.occlusion_value = 0
-            elif self.occlusion_method == 'grey':
-                self.occlusion_value = 128
+    def make_visualization(self, inputs, output_dir):
+        if self.occlusion_method == 'black':
+            self.occlusion_value = 0
+        elif self.occlusion_method == 'grey':
+            self.occlusion_value = 128
 
         # get class predictions as in ClassProbabilities
         pre_processed_arrays = self.model.preprocess([example['data']
-                                                     for example in inputs])
-        class_predictions = \
-            self.model.sess.run(self.model.tf_predict_var,
-                                feed_dict={self.model.tf_input_var:
-                                           pre_processed_arrays})
+                                                      for example in inputs])
+        class_predictions = self.model.sess.run(
+            self.model.tf_predict_var,
+            feed_dict={self.model.tf_input_var: pre_processed_arrays})
         decoded_predictions = self.model.decode_prob(class_predictions)
 
         results = []
@@ -86,49 +105,22 @@ class PartialOcclusion(BaseVisualization):
                 os.path.join(output_dir, example_filename),
                 format=im_format)
 
-            filenames = \
-                self.make_heatmaps(predictions,
-                                   output_dir,
-                                   example['filename'],
-                                   decoded_predictions=decoded_predictions[i])
-            results.append({'input_filename': example['filename'],
-                            'result_filenames': filenames,
+            filenames = self.make_heatmaps(
+                predictions, output_dir, example['filename'],
+                decoded_predictions=decoded_predictions[i])
+            results.append({'input_file_name': example['filename'],
+                            'has_output': True,
+                            'output_file_names': filenames,
                             'predict_probs': decoded_predictions[i],
-                            'example_filename': example_filename})
+                            'has_processed_input': True,
+                            'processed_input_file_name': example_filename})
         return results
 
     def get_predict_tensor(self):
         # Assume that predict is the softmax
         # tensor in the computation graph
-        return self.model.sess.graph. \
-            get_tensor_by_name(self.model.tf_predict_var.name)
-
-    def update_settings(self, settings):
-        def error_string(setting, setting_val):
-            return ('{val} is not an acceptable value for '
-                    'parameter {param} for visualization'
-                    '{vis}.').format(val=setting_val,
-                                     param=setting,
-                                     vis=self.__class__.__name__)
-
-        if 'Window' in settings:
-            if settings['Window'] in self.settings['Window']:
-                self.window = float(settings['Window'])
-            else:
-                raise ValueError(error_string(settings['Window'], 'Window'))
-
-        if 'Strides' in settings:
-            if settings['Strides'] in self.settings['Strides']:
-                self.num_windows = int(settings['Strides'])
-            else:
-                raise ValueError(error_string(settings['Strides'], 'Strides'))
-
-        if 'Occlusion' in settings:
-            if settings['Occlusion'] in self.settings['Occlusion']:
-                self.occlusion_method = settings['Occlusion']
-            else:
-                raise ValueError(error_string(settings['Occlusion'],
-                                              'Occlusion'))
+        return self.model.sess.graph.get_tensor_by_name(
+            self.model.tf_predict_var.name)
 
     def make_heatmaps(self, predictions,
                       output_dir, filename,
@@ -166,12 +158,9 @@ class PartialOcclusion(BaseVisualization):
         win_length = round(self.window * length)
         pad_horizontal = win_width // 2
         pad_vertical = win_length // 2
-        centers_horizontal, centers_vertical = \
-            self.get_centers(width, length,
-                             win_width, win_length,
-                             pad_horizontal, pad_vertical,
-                             self.num_windows
-                             )
+        centers_horizontal, centers_vertical = self.get_centers(
+            width, length, win_width, win_length, pad_horizontal, pad_vertical,
+            self.num_windows)
         upper_left_corners = np.array(
             [(w - pad_vertical, v - pad_horizontal)
              for w in centers_vertical
